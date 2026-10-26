@@ -1,0 +1,21 @@
+# reservedTids: the all-digit tids accepted (all others are refused); people is 00000001.
+# quota.default: every tenant namespace's ResourceQuota; quota.deployments.<name>: merged over it for that
+# deployment. services.loadbalancers and services.nodeports are always 0, whatever is set here.
+# Read on every reconcile; a change reaches existing namespaces within the resync period (10 minutes).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nsproxy
+  namespace: nsproxy
+data:
+  config.yaml: |
+    reservedTids: ["00000001"]
+    quota:
+      default:
+        pods: "100"
+        requests.cpu: "8"
+        requests.memory: 16Gi
+        limits.memory: 32Gi
+        persistentvolumeclaims: "20"
+        requests.storage: 200Gi
+      deployments: {}

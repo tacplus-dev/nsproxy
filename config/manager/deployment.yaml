@@ -1,0 +1,46 @@
+# One per cluster, deployed by the top pipeline. No listener: no Service, no probes, no metrics port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nsproxy
+  namespace: nsproxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nsproxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nsproxy
+    spec:
+      serviceAccountName: nsproxy
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nsproxy
+          image: ghcr.io/tacplus-dev/nsproxy:latest
+          args: [--config=/etc/nsproxy/config.yaml]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nsproxy
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: nsproxy

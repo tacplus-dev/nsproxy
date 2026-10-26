@@ -1,0 +1,32 @@
+# nsproxy's only rights, and nothing else. RBAC cannot scope by label, so the grants on namespaces and on
+# the objects inside them are cluster-wide; nsproxy itself touches only namespaces carrying its owner label.
+# Nothing here grants creating TenantNamespace objects: that is a Role in each deployment namespace
+# (config/deployment-namespace). This ClusterRole is not aggregated into admin, edit or view.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nsproxy
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The one ClusterRole it binds, in a tenant namespace, to the deployment's operator.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [admin]
+  - apiGroups: [nsproxy.tacplus.dev]
+    resources: [tenantnamespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [nsproxy.tacplus.dev]
+    resources: [tenantnamespaces/status]
+    verbs: [get, update, patch]
