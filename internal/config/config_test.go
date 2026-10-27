@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -77,6 +78,8 @@ func TestParseRejects(t *testing.T) {
 		`reservedTids: ["1"]`,
 		`unknown: 1`,
 		`quota: {default: {pods: "lots"}}`,
+		`sharedTids: ["00000002"]`, // shared, not reserved
+		`{reservedTids: ["00000002"], sharedTids: ["abcdefgh"]}`,
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("Parse(%q) succeeded, want an error", bad)
@@ -99,5 +102,12 @@ func TestShippedConfigMap(t *testing.T) {
 	}
 	if !c.ValidTid("00000001") {
 		t.Error("people's tid 00000001 is not reserved")
+	}
+	if !c.ValidTid("00000002") {
+		t.Error("restore's tid 00000002 is not reserved")
+	}
+	// Restore is reached by every tenant of its deployment; people only by the deployment namespace.
+	if fmt.Sprint(c.SharedTids) != "[00000002]" {
+		t.Errorf("sharedTids = %v, want [00000002]", c.SharedTids)
 	}
 }

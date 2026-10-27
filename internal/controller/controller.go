@@ -241,7 +241,7 @@ func (r *Reconciler) ensure(ctx context.Context, tn *nsproxyv1.TenantNamespace, 
 	if err := r.ensureNamespace(ctx, owner, name, deployment, tn.Spec.Tid); err != nil {
 		return "", err
 	}
-	for _, obj := range desiredObjects(owner, name, deployment, parent.Name, cfg) {
+	for _, obj := range desiredObjects(owner, name, deployment, tn.Spec.Tid, parent.Name, cfg) {
 		if err := r.ensureObject(ctx, obj); err != nil {
 			return "", err
 		}

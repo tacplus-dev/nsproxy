@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +34,8 @@ import (
 // one it relies on that they do not grant, fails here.
 
 const testConfig = `
-reservedTids: ["00000001"]
+reservedTids: ["00000001", "00000002"]
+sharedTids: ["00000002"]
 quota:
   default:
     pods: "10"
@@ -42,10 +44,16 @@ quota:
       pods: "100"
 `
 
+// resync is the test manager's resync period: short, so that a config change reaches existing tenant
+// namespaces within a test, the way it does within nsproxy's (longer) resync period.
+const resync = 2 * time.Second
+
 var (
 	scheme   = runtime.NewScheme()
 	adminCfg *rest.Config
 	admin    client.Client
+	// currentConfig is what the controller reads on every reconcile; setConfig changes it.
+	currentConfig atomic.Pointer[config.Config]
 )
 
 func TestMain(m *testing.M) {
@@ -101,9 +109,13 @@ func run(m *testing.M) int {
 	if err != nil {
 		panic(err)
 	}
+	currentConfig.Store(cfg)
+	cacheOpts := CacheOptions()
+	syncPeriod := resync
+	cacheOpts.SyncPeriod = &syncPeriod
 	mgr, err := ctrl.NewManager(impersonate(adminCfg, "nsproxy", "nsproxy"), ctrl.Options{
 		Scheme:  scheme,
-		Cache:   CacheOptions(),
+		Cache:   cacheOpts,
 		Metrics: metricsserver.Options{BindAddress: "0"},
 	})
 	if err != nil {
@@ -112,7 +124,7 @@ func run(m *testing.M) int {
 	r := &Reconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		Config:    func() (*config.Config, error) { return cfg, nil },
+		Config:    func() (*config.Config, error) { return currentConfig.Load(), nil },
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		panic(err)
@@ -123,6 +135,18 @@ func run(m *testing.M) int {
 		}
 	}()
 	return m.Run()
+}
+
+// setConfig makes the controller read config.yaml content c from now on, and testConfig again once the test
+// is over.
+func setConfig(t *testing.T, c string) {
+	t.Helper()
+	cfg, err := config.Parse([]byte(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := currentConfig.Swap(cfg)
+	t.Cleanup(func() { currentConfig.Store(old) })
 }
 
 // impersonate returns cfg acting as the service account namespace/name.

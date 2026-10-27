@@ -12,9 +12,9 @@ import (
 	"github.com/tacplus-dev/nsproxy/internal/config"
 )
 
-// desiredObjects are the objects nsproxy keeps in tenant namespace child of deployment, asked for by
-// TenantNamespace owner in namespace parent.
-func desiredObjects(owner types.NamespacedName, child, deployment, parent string, cfg *config.Config) []client.Object {
+// desiredObjects are the objects nsproxy keeps in tenant namespace child of deployment, for tenant tid, asked
+// for by TenantNamespace owner in namespace parent.
+func desiredObjects(owner types.NamespacedName, child, deployment, tid, parent string, cfg *config.Config) []client.Object {
 	om := func(name string) metav1.ObjectMeta {
 		return metav1.ObjectMeta{
 			Namespace:   child,
@@ -29,6 +29,38 @@ func desiredObjects(owner types.NamespacedName, child, deployment, parent string
 	}
 	udp, tcp := corev1.ProtocolUDP, corev1.ProtocolTCP
 	dns := intstr.FromInt32(53)
+
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &everyPod}}},
+	}
+	egress := []networkingv1.NetworkPolicyEgressRule{
+		{To: []networkingv1.NetworkPolicyPeer{{PodSelector: &everyPod}}},
+		{
+			To: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: namespace(metav1.NamespaceSystem),
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
+			}},
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns}},
+		},
+		{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: namespace(parent)}}},
+	}
+	// The deployment's shared tenants (restore), chosen by nsproxy's labels: every tenant namespace of the
+	// deployment reaches each, and each accepts every tenant namespace of the deployment.
+	for _, shared := range cfg.SharedTids {
+		if shared == tid {
+			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{OwnerLabel: deployment},
+				}}},
+			})
+			continue
+		}
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{OwnerLabel: deployment, TidLabel: shared},
+			}}},
+		})
+	}
 
 	return []client.Object{
 		// The deployment's operator is admin of this namespace and nothing beyond it.
@@ -46,26 +78,15 @@ func desiredObjects(owner types.NamespacedName, child, deployment, parent string
 			},
 		},
 		// What is allowed: the namespace's own pods to each other, the cluster DNS (a name in the deployment
-		// namespace must resolve), and the deployment namespace. Everything else is the operator's to add.
+		// namespace must resolve), the deployment namespace, and the deployment's shared tenants. Everything
+		// else is the operator's to add.
 		&networkingv1.NetworkPolicy{
 			ObjectMeta: om(AllowPolicyName),
 			Spec: networkingv1.NetworkPolicySpec{
 				PodSelector: everyPod,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
-				Ingress: []networkingv1.NetworkPolicyIngressRule{
-					{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &everyPod}}},
-				},
-				Egress: []networkingv1.NetworkPolicyEgressRule{
-					{To: []networkingv1.NetworkPolicyPeer{{PodSelector: &everyPod}}},
-					{
-						To: []networkingv1.NetworkPolicyPeer{{
-							NamespaceSelector: namespace(metav1.NamespaceSystem),
-							PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
-						}},
-						Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns}},
-					},
-					{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: namespace(parent)}}},
-				},
+				Ingress:     ingress,
+				Egress:      egress,
 			},
 		},
 		// No load balancers or node ports, whatever the deployment's limits.

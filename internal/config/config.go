@@ -1,11 +1,12 @@
-// Package config is nsproxy's configuration: the reserved tids it accepts and the quota it gives each
-// deployment's tenant namespaces. It is read from the nsproxy ConfigMap, mounted as a file.
+// Package config is nsproxy's configuration: the reserved tids it accepts, those every tenant of a deployment
+// may reach, and the quota it gives each deployment's tenant namespaces. It is read from the nsproxy ConfigMap, mounted as a file.
 package config
 
 import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,7 +23,11 @@ type Config struct {
 	// ReservedTids are the all-digit tids nsproxy accepts (people is 00000001). Every other all-digit tid
 	// is refused.
 	ReservedTids []string `json:"reservedTids,omitempty"`
-	Quota        Quota    `json:"quota,omitempty"`
+	// SharedTids are reserved tids whose tenant namespace every tenant namespace of the same deployment may
+	// reach (restore is 00000002), and which accepts traffic from them. No other tenant namespace is
+	// reachable from another.
+	SharedTids []string `json:"sharedTids,omitempty"`
+	Quota      Quota    `json:"quota,omitempty"`
 }
 
 // Quota is the ResourceQuota of a tenant namespace: Default, with a deployment's entry in Deployments
@@ -52,6 +57,11 @@ func Parse(b []byte) (*Config, error) {
 			return nil, fmt.Errorf("config: reserved tid %q is not 8 digits", tid)
 		}
 	}
+	for _, tid := range c.SharedTids {
+		if !slices.Contains(c.ReservedTids, tid) {
+			return nil, fmt.Errorf("config: shared tid %q is not a reserved tid", tid)
+		}
+	}
 	return c, nil
 }
 
@@ -63,12 +73,7 @@ func (c *Config) ValidTid(tid string) bool {
 	if !reservedPattern.MatchString(tid) {
 		return true
 	}
-	for _, r := range c.ReservedTids {
-		if r == tid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.ReservedTids, tid)
 }
 
 // QuotaFor returns the hard limits of a tenant namespace of deployment.

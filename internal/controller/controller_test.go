@@ -118,11 +118,11 @@ func TestTidValidatedByCRD(t *testing.T) {
 func TestReservedTids(t *testing.T) {
 	deploymentNamespace(t, "tac-rsv", "rsv")
 
-	refused := newTenantNamespace("tac-rsv", "unreserved", "00000002")
+	refused := newTenantNamespace("tac-rsv", "unreserved", "00000003")
 	create(t, refused)
 	waitReady(t, refused, metav1.ConditionFalse, ReasonReservedTid)
-	if _, err := getNamespace("tac-rsv-00000002"); !apierrors.IsNotFound(err) {
-		t.Fatalf("tac-rsv-00000002: got %v, want NotFound", err)
+	if _, err := getNamespace("tac-rsv-00000003"); !apierrors.IsNotFound(err) {
+		t.Fatalf("tac-rsv-00000003: got %v, want NotFound", err)
 	}
 
 	people := newTenantNamespace("tac-rsv", "people", "00000001")
