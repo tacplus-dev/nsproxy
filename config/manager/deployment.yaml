@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: nsproxy
-          image: ghcr.io/tacplus-dev/nsproxy:latest
+          image: ghcr.io/tacplus-dev/nsproxy:0.1
           args: [--config=/etc/nsproxy/config.yaml]
           securityContext:
             allowPrivilegeEscalation: false

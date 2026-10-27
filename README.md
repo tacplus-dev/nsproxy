@@ -64,3 +64,28 @@ refused, `Ready=False` and the reason says why (`NotDeploymentNamespace`, `InTen
 `make check` runs the gates: gofmt, `go vet`, build, and the tests. The controller tests run a real API server
 ([envtest](https://book.kubebuilder.io/reference/envtest), fetched by `setup-envtest`) with the CRD, and run the
 controller as nsproxy's service account under the RBAC manifests above. `make image` builds the container image.
+
+## Releasing
+
+nsproxy is released by version, and fleets pin a release line, `MAJOR.MINOR`, which is always that line's
+highest patch ([tacplus#180](https://github.com/tacplus-dev/tacplus/issues/180)). Versions are `0.x` until
+SeaBeam's launch (2026-12-01), when `1.0.0` is cut; on `0.x` a minor may break, a patch never does.
+
+A change merged to main is released by the same run that merged it: a fix as the next patch, a feature as the
+next minor. To cut one, from the commit to release:
+
+```sh
+git tag v0.1.1          # vMAJOR.MINOR.PATCH; a patch to an older line is tagged on release/MAJOR.MINOR
+git push origin v0.1.1
+```
+
+A new minor also moves the image in `config/manager/deployment.yaml` to its line, in the commit it tags.
+
+The tag runs [release.yml](.github/workflows/release.yml): the gates on the tag, then
+`ghcr.io/tacplus-dev/nsproxy:<version>` for linux/amd64 and linux/arm64, labelled with the version and commit
+(`org.opencontainers.image.version`, `.revision`), and `:<MAJOR.MINOR>` moved to it only when it is the line's
+highest patch, so the line tag never goes backwards and no other line moves
+([scripts/release-tags.sh](scripts/release-tags.sh)). The GitHub release's notes are the commits since the
+previous release ([scripts/release-notes.sh](scripts/release-notes.sh)). A pre-release (`v0.2.0-rc.1`) publishes
+only its own tag. Running the workflow by hand (`gh workflow run release.yml -f version=v0.1.1`) is a dry run:
+it builds both architectures and prints the tags and notes that version would get, and publishes nothing.

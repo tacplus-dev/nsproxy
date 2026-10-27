@@ -1,0 +1,103 @@
+name: release
+
+# On a version tag vX.Y.Z: run the gates on the tag, publish ghcr.io/tacplus-dev/nsproxy:X.Y.Z for linux/amd64
+# and linux/arm64, move the line tag X.Y when this is the line's highest release (scripts/release-tags.sh),
+# and create the GitHub release with the commits since the previous release (scripts/release-notes.sh).
+# A pre-release (vX.Y.Z-rc.N) publishes only its own tag. Fleets pin X.Y (tacplus-dev/tacplus#180).
+#
+# workflow_dispatch is a dry run: it tags HEAD locally as the given version, builds both architectures and
+# prints the image tags and notes that release would get, and publishes nothing.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to dry-run, e.g. v0.1.1 (nothing is published)"
+        required: true
+
+permissions:
+  contents: read
+
+# One release at a time, so of two tags on one line the later run sees the other before it moves X.Y.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make check
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every tag: the line tag and the notes depend on the releases already made.
+          fetch-depth: 0
+      - name: Tags and notes
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          if [[ $DRY_RUN == true ]]; then
+            if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+              echo "$VERSION is already released"; exit 1
+            fi
+            git tag "$VERSION"
+          fi
+          tags="$(scripts/release-tags.sh "$VERSION")"
+          list=""; for t in $tags; do list+="${list:+,}$IMAGE:$t"; done
+          scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+          # The GitHub release marked Latest is the highest release, never a patch on an older line.
+          flag=--latest=false
+          if [[ "$VERSION" == *-* ]]; then
+            flag=--prerelease
+          elif [[ "$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -1)" == "$VERSION" ]]; then
+            flag=--latest
+          fi
+          { echo "tags=$list"; echo "flag=$flag"; } >> "$GITHUB_OUTPUT"
+          echo "image tags: $list"
+          echo "release: $flag"
+          cat "$RUNNER_TEMP/notes.md"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.DRY_RUN != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
+          push: ${{ env.DRY_RUN != 'true' }}
+          tags: ${{ steps.plan.outputs.tags }}
+      - name: Image
+        if: env.DRY_RUN != 'true'
+        run: docker buildx imagetools inspect "$IMAGE:${VERSION#v}"
+      - name: GitHub release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md" ${{ steps.plan.outputs.flag }}
